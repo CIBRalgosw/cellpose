@@ -2,7 +2,14 @@
 Copright © 2023 Howard Hughes Medical Institute, Authored by Carsen Stringer and Marius Pachitariu.
 """
 
-import os, sys, time, shutil, tempfile, datetime, pathlib, subprocess
+import os
+import sys
+import time
+import shutil
+import tempfile
+import datetime
+import pathlib
+import subprocess
 import logging
 import numpy as np
 from tqdm import trange, tqdm
@@ -14,34 +21,36 @@ import fastremap
 from . import transforms, dynamics, utils, plot, metrics
 
 import torch
-#     from GPUtil import showUtilization as gpu_usage #for gpu memory debugging 
+#     from GPUtil import showUtilization as gpu_usage #for gpu memory debugging
 from torch import nn
 from torch.utils import mkldnn as mkldnn_utils
 from . import resnet_torch
+
 TORCH_ENABLED = True
 
 core_logger = logging.getLogger(__name__)
 tqdm_out = utils.TqdmToLogger(core_logger, level=logging.INFO)
+
 
 def parse_model_string(pretrained_model):
     if isinstance(pretrained_model, list):
         model_str = os.path.split(pretrained_model[0])[-1]
     else:
         model_str = os.path.split(pretrained_model)[-1]
-    if len(model_str)>3 and model_str[:4]=='unet':
+    if len(model_str) > 3 and model_str[:4] == 'unet':
         cp = False
         nclasses = max(2, int(model_str[4]))
-    elif len(model_str)>7 and model_str[:8]=='cellpose':
+    elif len(model_str) > 7 and model_str[:8] == 'cellpose':
         cp = True
         nclasses = 3
     else:
         return 3, True, True, False
-    
+
     if 'residual' in model_str and 'style' in model_str and 'concatentation' in model_str:
         ostrs = model_str.split('_')[2::2]
-        residual_on = ostrs[0]=='on'
-        style_on = ostrs[1]=='on'
-        concatenation = ostrs[2]=='on'
+        residual_on = ostrs[0] == 'on'
+        style_on = ostrs[1] == 'on'
+        concatenation = ostrs[2] == 'on'
         return nclasses, residual_on, style_on, concatenation
     else:
         if cp:
@@ -49,12 +58,14 @@ def parse_model_string(pretrained_model):
         else:
             return nclasses, False, False, True
 
+
 def use_gpu(gpu_number=0, use_torch=True):
     """ check if gpu works """
     if use_torch:
         return _use_gpu_torch(gpu_number)
     else:
         raise ValueError('cellpose only runs with pytorch now')
+
 
 def _use_gpu_torch(gpu_number=0):
     try:
@@ -66,51 +77,56 @@ def _use_gpu_torch(gpu_number=0):
         core_logger.info('TORCH CUDA version not installed/working.')
         return False
 
+
 def assign_device(use_torch=True, gpu=False, device=0):
     mac = False
     cpu = True
     if isinstance(device, str):
-        if device=='mps':
-            mac = True 
+        if device == 'mps':
+            mac = True
         else:
             device = int(device)
     if gpu and use_gpu(use_torch=True):
         device = torch.device(f'cuda:{device}')
-        gpu=True
-        cpu=False
+        gpu = True
+        cpu = False
         core_logger.info('>>>> using GPU')
     elif mac:
         try:
             device = torch.device('mps')
-            gpu=True
-            cpu=False
+            gpu = True
+            cpu = False
             core_logger.info('>>>> using GPU')
         except:
-            cpu = True 
+            cpu = True
             gpu = False
 
     if cpu:
         device = torch.device('cpu')
         core_logger.info('>>>> using CPU')
-        gpu=False
+        gpu = False
     return device, gpu
 
+
 def check_mkl(use_torch=True):
-    #core_logger.info('Running test snippet to check if MKL-DNN working')
+    # core_logger.info('Running test snippet to check if MKL-DNN working')
     mkl_enabled = torch.backends.mkldnn.is_available()
     if mkl_enabled:
         mkl_enabled = True
-        #core_logger.info('MKL version working - CPU version is sped up.')
+        # core_logger.info('MKL version working - CPU version is sped up.')
     else:
-        core_logger.info('WARNING: MKL version on torch not working/installed - CPU version will be slightly slower.')
-        core_logger.info('see https://pytorch.org/docs/stable/backends.html?highlight=mkl')
+        core_logger.info(
+            'WARNING: MKL version on torch not working/installed - CPU version will be slightly slower.')
+        core_logger.info(
+            'see https://pytorch.org/docs/stable/backends.html?highlight=mkl')
     return mkl_enabled
+
 
 class UnetModel():
     def __init__(self, gpu=False, pretrained_model=False,
-                    diam_mean=30., net_avg=False, device=None,
-                    residual_on=False, style_on=False, concatenation=True,
-                    nclasses=3, nchan=2):
+                 diam_mean=30., net_avg=False, device=None,
+                 residual_on=False, style_on=False, concatenation=True,
+                 nclasses=3, nchan=2):
         self.unet = True
         self.torch = True
         self.mkldnn = None
@@ -118,7 +134,7 @@ class UnetModel():
             sdevice, gpu = assign_device(self.torch, gpu)
         self.device = device if device is not None else sdevice
         if device is not None:
-            device_gpu = self.device.type=='cuda'
+            device_gpu = self.device.type == 'cuda'
         self.gpu = gpu if device is None else device_gpu
         if not self.gpu:
             self.mkldnn = check_mkl(True)
@@ -127,32 +143,32 @@ class UnetModel():
 
         ostr = ['off', 'on']
         self.net_type = 'unet{}_residual_{}_style_{}_concatenation_{}'.format(nclasses,
-                                                                                ostr[residual_on],
-                                                                                ostr[style_on],
-                                                                                ostr[concatenation])                                             
+                                                                              ostr[residual_on],
+                                                                              ostr[style_on],
+                                                                              ostr[concatenation])
         if pretrained_model:
             core_logger.info(f'u-net net type: {self.net_type}')
         # create network
         self.nclasses = nclasses
-        self.nbase = [32,64,128,256]
+        self.nbase = [32, 64, 128, 256]
         self.nchan = nchan
         self.nbase = [nchan, 32, 64, 128, 256]
-        self.net = resnet_torch.CPnet(self.nbase, 
-                                        self.nclasses, 
-                                        sz=3,
-                                        residual_on=residual_on, 
-                                        style_on=style_on,
-                                        concatenation=concatenation,
-                                        mkldnn=self.mkldnn,
-                                        diam_mean=diam_mean).to(self.device)
-        
+        self.net = resnet_torch.CPnet(self.nbase,
+                                      self.nclasses,
+                                      sz=3,
+                                      residual_on=residual_on,
+                                      style_on=style_on,
+                                      concatenation=concatenation,
+                                      mkldnn=self.mkldnn,
+                                      diam_mean=diam_mean).to(self.device)
+
         if pretrained_model is not None and isinstance(pretrained_model, str):
             self.net.load_model(pretrained_model, device=self.device)
 
     def eval(self, x, batch_size=8, channels=None, channels_last=False, invert=False, normalize=True,
              rescale=None, do_3D=False, anisotropy=None, net_avg=False, augment=False,
              channel_axis=None, z_axis=None, nolist=False,
-             tile=True, cell_threshold=None, boundary_threshold=None, min_size=15, 
+             tile=True, cell_threshold=None, boundary_threshold=None, min_size=15,
              compute_masks=True):
         """ segment list of images x
 
@@ -226,9 +242,9 @@ class UnetModel():
             styles: list of 1D arrays of length 64, or single 1D array (if do_3D=True)
                 style vector summarizing each image, also used to estimate size of objects in image
 
-        """        
-        x = [transforms.convert_image(xi, channels, channel_axis, z_axis, do_3D, 
-                                    normalize, invert, nchan=self.nchan) for xi in x]
+        """
+        x = [transforms.convert_image(xi, channels, channel_axis, z_axis, do_3D,
+                                      normalize, invert, nchan=self.nchan) for xi in x]
         nimg = len(x)
         self.batch_size = batch_size
 
@@ -247,7 +263,8 @@ class UnetModel():
         if isinstance(self.pretrained_model, list):
             model_path = self.pretrained_model[0]
             if not net_avg:
-                self.net.load_model(self.pretrained_model[0], device=self.device)
+                self.net.load_model(
+                    self.pretrained_model[0], device=self.device)
         else:
             model_path = self.pretrained_model
 
@@ -255,9 +272,11 @@ class UnetModel():
             try:
                 thresholds = np.load(model_path+'_cell_boundary_threshold.npy')
                 cell_threshold, boundary_threshold = thresholds
-                core_logger.info('>>>> found saved thresholds from validation set')
+                core_logger.info(
+                    '>>>> found saved thresholds from validation set')
             except:
-                core_logger.warning('WARNING: no thresholds found, using default / user input')
+                core_logger.warning(
+                    'WARNING: no thresholds found, using default / user input')
 
         cell_threshold = 2.0 if cell_threshold is None else cell_threshold
         boundary_threshold = 0.5 if boundary_threshold is None else boundary_threshold
@@ -268,37 +287,42 @@ class UnetModel():
                 shape = img.shape
                 # rescale image for flow computation
                 img = transforms.resize_image(img, rsz=rescale[i])
-                y, style = self._run_nets(img, net_avg=net_avg, augment=augment, 
+                y, style = self._run_nets(img, net_avg=net_avg, augment=augment,
                                           tile=tile)
                 if compute_masks:
-                    maski = utils.get_masks_unet(y, cell_threshold, boundary_threshold)
-                    maski = utils.fill_holes_and_remove_small_masks(maski, min_size=min_size)
-                    maski = transforms.resize_image(maski, shape[-3], shape[-2], 
-                                                        interpolation=cv2.INTER_NEAREST)
+                    maski = utils.get_masks_unet(
+                        y, cell_threshold, boundary_threshold)
+                    maski = utils.fill_holes_and_remove_small_masks(
+                        maski, min_size=min_size)
+                    maski = transforms.resize_image(maski, shape[-3], shape[-2],
+                                                    interpolation=cv2.INTER_NEAREST)
                 else:
                     maski = None
                 masks.append(maski)
                 styles.append(style)
         else:
             for i in iterator:
-                tic=time.time()
-                yf, style = self._run_3D(x[i], rsz=rescale[i], anisotropy=anisotropy, 
+                tic = time.time()
+                yf, style = self._run_3D(x[i], rsz=rescale[i], anisotropy=anisotropy,
                                          net_avg=net_avg, augment=augment, tile=tile)
                 yf = yf.mean(axis=0)
-                core_logger.info('probabilities computed %2.2fs'%(time.time()-tic))
+                core_logger.info('probabilities computed %2.2fs' %
+                                 (time.time()-tic))
                 if compute_masks:
-                    maski = utils.get_masks_unet(yf.transpose((1,2,3,0)), cell_threshold, boundary_threshold)
-                    maski = utils.fill_holes_and_remove_small_masks(maski, min_size=min_size)
+                    maski = utils.get_masks_unet(yf.transpose(
+                        (1, 2, 3, 0)), cell_threshold, boundary_threshold)
+                    maski = utils.fill_holes_and_remove_small_masks(
+                        maski, min_size=min_size)
                 else:
                     maski = None
                 masks.append(maski)
                 styles.append(style)
-                core_logger.info('masks computed %2.2fs'%(time.time()-tic))
+                core_logger.info('masks computed %2.2fs' % (time.time()-tic))
                 flows.append(yf)
 
         if nolist:
             masks, flows, styles = masks[0], flows[0], styles[0]
-        
+
         return masks, flows, styles
 
     def _to_device(self, x):
@@ -323,10 +347,10 @@ class UnetModel():
         if return_conv:
             conv = self._from_device(conv)
             y = np.concatenate((y, conv), axis=1)
-        
+
         return y, style
-                
-    def _run_nets(self, img, net_avg=False, augment=False, tile=True, tile_overlap=0.1, bsize=224, 
+
+    def _run_nets(self, img, net_avg=False, augment=False, tile=True, tile_overlap=0.1, bsize=224,
                   return_conv=False, progress=None):
         """ run network (if more than one, loop over networks and average results
 
@@ -363,24 +387,25 @@ class UnetModel():
             but not averaged over networks.
 
         """
-        if isinstance(self.pretrained_model, str) or not net_avg:  
+        if isinstance(self.pretrained_model, str) or not net_avg:
             y, style = self._run_net(img, augment=augment, tile=tile, tile_overlap=tile_overlap,
                                      bsize=bsize, return_conv=return_conv)
-        else:  
+        else:
             for j in range(len(self.pretrained_model)):
-                self.net.load_model(self.pretrained_model[j], device=self.device)
-                y0, style = self._run_net(img, augment=augment, tile=tile, 
+                self.net.load_model(
+                    self.pretrained_model[j], device=self.device)
+                y0, style = self._run_net(img, augment=augment, tile=tile,
                                           tile_overlap=tile_overlap, bsize=bsize,
                                           return_conv=return_conv)
 
-                if j==0:
+                if j == 0:
                     y = y0
                 else:
                     y += y0
                 if progress is not None:
                     progress.setValue(10 + 10*j)
             y = y / len(self.pretrained_model)
-            
+
         return y, style
 
     def _run_net(self, imgs, augment=False, tile=True, tile_overlap=0.1, bsize=224,
@@ -420,21 +445,21 @@ class UnetModel():
             1D array summarizing the style of the image,
             if tiled it is averaged over tiles
 
-        """   
-        if imgs.ndim==4:  
+        """
+        if imgs.ndim == 4:
             # make image Lz x nchan x Ly x Lx for net
-            imgs = np.transpose(imgs, (0,3,1,2)) 
-            detranspose = (0,2,3,1)
+            imgs = np.transpose(imgs, (0, 3, 1, 2))
+            detranspose = (0, 2, 3, 1)
             return_conv = False
         else:
             # make image nchan x Ly x Lx for net
-            imgs = np.transpose(imgs, (2,0,1))
-            detranspose = (1,2,0)
+            imgs = np.transpose(imgs, (2, 0, 1))
+            detranspose = (1, 2, 0)
 
         # pad image for net so Ly and Lx are divisible by 4
         imgs, ysub, xsub = transforms.pad_image_ND(imgs)
         # slices from padding
-#         slc = [slice(0, self.nclasses) for n in range(imgs.ndim)] # changed from imgs.shape[n]+1 for first slice size 
+#         slc = [slice(0, self.nclasses) for n in range(imgs.ndim)] # changed from imgs.shape[n]+1 for first slice size
         slc = [slice(0, imgs.shape[n]+1) for n in range(imgs.ndim)]
         slc[-3] = slice(0, self.nclasses + 32*return_conv + 1)
         slc[-2] = slice(ysub[0], ysub[-1]+1)
@@ -442,10 +467,10 @@ class UnetModel():
         slc = tuple(slc)
 
         # run network
-        if tile or augment or imgs.ndim==4:
-            y, style = self._run_tiled(imgs, augment=augment, bsize=bsize, 
-                                      tile_overlap=tile_overlap, 
-                                      return_conv=return_conv)
+        if tile or augment or imgs.ndim == 4:
+            y, style = self._run_tiled(imgs, augment=augment, bsize=bsize,
+                                       tile_overlap=tile_overlap,
+                                       return_conv=return_conv)
         else:
             imgs = np.expand_dims(imgs, axis=0)
             y, style = self.network(imgs, return_conv=return_conv)
@@ -456,9 +481,9 @@ class UnetModel():
         y = y[slc]
         # transpose so channels axis is last again
         y = np.transpose(y, detranspose)
-        
+
         return y, style
-    
+
     def _run_tiled(self, imgi, augment=False, bsize=224, tile_overlap=0.1, return_conv=False):
         """ run network in tiles of size [bsize x bsize]
 
@@ -476,7 +501,7 @@ class UnetModel():
 
         bsize: int (optional, default 224)
             size of tiles to use in pixels [bsize x bsize]
-         
+
         tile_overlap: float (optional, default 0.1)
             fraction of overlap of tiles when computing flows
 
@@ -491,19 +516,20 @@ class UnetModel():
             1D array summarizing the style of the image, averaged over tiles
 
         """
-        if imgi.ndim==4:
-            batch_size = self.batch_size 
+        if imgi.ndim == 4:
+            batch_size = self.batch_size
             Lz, nchan = imgi.shape[:2]
-            IMG, ysub, xsub, Ly, Lx = transforms.make_tiles(imgi[0], bsize=bsize, 
+            IMG, ysub, xsub, Ly, Lx = transforms.make_tiles(imgi[0], bsize=bsize,
                                                             augment=augment, tile_overlap=tile_overlap)
             ny, nx, nchan, ly, lx = IMG.shape
             batch_size *= max(4, (bsize**2 // (ly*lx))**0.5)
-            yf = np.zeros((Lz, self.nclasses, imgi.shape[-2], imgi.shape[-1]), np.float32)
+            yf = np.zeros(
+                (Lz, self.nclasses, imgi.shape[-2], imgi.shape[-1]), np.float32)
             styles = []
             if ny*nx > batch_size:
                 ziterator = trange(Lz, file=tqdm_out)
                 for i in ziterator:
-                    yfi, stylei = self._run_tiled(imgi[i], augment=augment, 
+                    yfi, stylei = self._run_tiled(imgi[i], augment=augment,
                                                   bsize=bsize, tile_overlap=tile_overlap)
                     yf[i] = yfi
                     styles.append(stylei)
@@ -516,9 +542,10 @@ class UnetModel():
                 for k in ziterator:
                     IMGa = np.zeros((ntiles*nimgs, nchan, ly, lx), np.float32)
                     for i in range(min(Lz-k*nimgs, nimgs)):
-                        IMG, ysub, xsub, Ly, Lx = transforms.make_tiles(imgi[k*nimgs+i], bsize=bsize, 
+                        IMG, ysub, xsub, Ly, Lx = transforms.make_tiles(imgi[k*nimgs+i], bsize=bsize,
                                                                         augment=augment, tile_overlap=tile_overlap)
-                        IMGa[i*ntiles:(i+1)*ntiles] = np.reshape(IMG, (ny*nx, nchan, ly, lx))
+                        IMGa[i*ntiles:(i+1)*ntiles] = np.reshape(IMG,
+                                                                 (ny*nx, nchan, ly, lx))
                     ya, stylea = self.network(IMGa)
                     for i in range(min(Lz-k*nimgs, nimgs)):
                         y = ya[i*ntiles:(i+1)*ntiles]
@@ -527,14 +554,14 @@ class UnetModel():
                             y = transforms.unaugment_tiles(y, self.unet)
                             y = np.reshape(y, (-1, 3, ly, lx))
                         yfi = transforms.average_tiles(y, ysub, xsub, Ly, Lx)
-                        yfi = yfi[:,:imgi.shape[2],:imgi.shape[3]]
+                        yfi = yfi[:, :imgi.shape[2], :imgi.shape[3]]
                         yf[k*nimgs+i] = yfi
                         stylei = stylea[i*ntiles:(i+1)*ntiles].sum(axis=0)
                         stylei /= (stylei**2).sum()**0.5
                         styles.append(stylei)
             return yf, np.array(styles)
         else:
-            IMG, ysub, xsub, Ly, Lx = transforms.make_tiles(imgi, bsize=bsize, 
+            IMG, ysub, xsub, Ly, Lx = transforms.make_tiles(imgi, bsize=bsize,
                                                             augment=augment, tile_overlap=tile_overlap)
             ny, nx, nchan, ly, lx = IMG.shape
             IMG = np.reshape(IMG, (ny*nx, nchan, ly, lx))
@@ -543,10 +570,12 @@ class UnetModel():
             nout = self.nclasses + 32*return_conv
             y = np.zeros((IMG.shape[0], nout, ly, lx))
             for k in range(niter):
-                irange = slice(batch_size*k, min(IMG.shape[0], batch_size*k+batch_size))
+                irange = slice(
+                    batch_size*k, min(IMG.shape[0], batch_size*k+batch_size))
                 y0, style = self.network(IMG[irange], return_conv=return_conv)
-                y[irange] = y0.reshape(irange.stop-irange.start, y0.shape[-3], y0.shape[-2], y0.shape[-1])
-                if k==0:
+                y[irange] = y0.reshape(
+                    irange.stop-irange.start, y0.shape[-3], y0.shape[-2], y0.shape[-1])
+                if k == 0:
                     styles = style[0]
                 styles += style.sum(axis=0)
             styles /= IMG.shape[0]
@@ -554,14 +583,14 @@ class UnetModel():
                 y = np.reshape(y, (ny, nx, nout, bsize, bsize))
                 y = transforms.unaugment_tiles(y, self.unet)
                 y = np.reshape(y, (-1, nout, bsize, bsize))
-            
+
             yf = transforms.average_tiles(y, ysub, xsub, Ly, Lx)
-            yf = yf[:,:imgi.shape[1],:imgi.shape[2]]
+            yf = yf[:, :imgi.shape[1], :imgi.shape[2]]
             styles /= (styles**2).sum()**0.5
             return yf, styles
 
-    def _run_3D(self, imgs, rsz=1.0, anisotropy=None, net_avg=False, 
-                augment=False, tile=True, tile_overlap=0.1, 
+    def _run_3D(self, imgs, rsz=1.0, anisotropy=None, net_avg=False,
+                augment=False, tile=True, tile_overlap=0.1,
                 bsize=224, progress=None):
         """ run network on stack of images
 
@@ -608,7 +637,7 @@ class UnetModel():
             1D array summarizing the style of the image,
             if tiled it is averaged over tiles
 
-        """ 
+        """
         sstr = ['YX', 'ZY', 'ZX']
         if anisotropy is not None:
             rescaling = [[rsz, rsz],
@@ -616,19 +645,21 @@ class UnetModel():
                          [rsz*anisotropy, rsz]]
         else:
             rescaling = [rsz] * 3
-        pm = [(0,1,2,3), (1,0,2,3), (2,0,1,3)]
-        ipm = [(3,0,1,2), (3,1,0,2), (3,1,2,0)]
-        yf = np.zeros((3, self.nclasses, imgs.shape[0], imgs.shape[1], imgs.shape[2]), np.float32)
+        pm = [(0, 1, 2, 3), (1, 0, 2, 3), (2, 0, 1, 3)]
+        ipm = [(3, 0, 1, 2), (3, 1, 0, 2), (3, 1, 2, 0)]
+        yf = np.zeros(
+            (3, self.nclasses, imgs.shape[0], imgs.shape[1], imgs.shape[2]), np.float32)
         for p in range(3 - 2*self.unet):
             xsl = imgs.copy().transpose(pm[p])
             # rescale image for flow computation
             shape = xsl.shape
-            xsl = transforms.resize_image(xsl, rsz=rescaling[p])  
+            xsl = transforms.resize_image(xsl, rsz=rescaling[p])
             # per image
-            core_logger.info('running %s: %d planes of size (%d, %d)'%(sstr[p], shape[0], shape[1], shape[2]))
-            y, style = self._run_nets(xsl, net_avg=net_avg, augment=augment, tile=tile, 
+            core_logger.info('running %s: %d planes of size (%d, %d)' %
+                             (sstr[p], shape[0], shape[1], shape[2]))
+            y, style = self._run_nets(xsl, net_avg=net_avg, augment=augment, tile=tile,
                                       bsize=bsize, tile_overlap=tile_overlap)
-            y = transforms.resize_image(y, shape[1], shape[2])    
+            y = transforms.resize_image(y, shape[1], shape[2])
             yf[p] = y.transpose(ipm[p])
             if progress is not None:
                 progress.setValue(25+15*p)
@@ -637,20 +668,20 @@ class UnetModel():
     def loss_fn(self, lbl, y):
         """ loss function between true labels lbl and prediction y """
         # if available set boundary pixels to 2
-        if lbl.shape[1]>1 and self.nclasses>2:
-            boundary = lbl[:,1]<=4
-            lbl = lbl[:,0]
+        if lbl.shape[1] > 1 and self.nclasses > 2:
+            boundary = lbl[:, 1] <= 4
+            lbl = lbl[:, 0]
             lbl[boundary] *= 2
         else:
-            lbl = lbl[:,0]
+            lbl = lbl[:, 0]
         lbl = self._to_device(lbl).long()
         loss = 8 * 1./self.nclasses * self.criterion(y, lbl)
         return loss
 
-    def train(self, train_data, train_labels, train_files=None, 
+    def train(self, train_data, train_labels, train_files=None,
               test_data=None, test_labels=None, test_files=None,
               channels=None, normalize=True, save_path=None, save_every=100, save_each=False,
-              learning_rate=0.2, n_epochs=500, momentum=0.9, weight_decay=0.00001, batch_size=8, 
+              learning_rate=0.2, n_epochs=500, momentum=0.9, weight_decay=0.00001, batch_size=8,
               nimg_per_epoch=None, min_train_masks=5, rescale=False, model_name=None):
         """ train function uses 0-1 mask label and boundary pixels for training """
 
@@ -659,31 +690,34 @@ class UnetModel():
         train_data, train_labels, test_data, test_labels, run_test = transforms.reshape_train_test(train_data, train_labels,
                                                                                                    test_data, test_labels,
                                                                                                    channels, normalize)
-        train_labels = [fastremap.renumber(label, in_place=True)[0] for label in train_labels]
+        train_labels = [fastremap.renumber(label, in_place=True)[
+            0] for label in train_labels]
         # add dist_to_bound to labels
-        if self.nclasses==3:
+        if self.nclasses == 3:
             core_logger.info('computing boundary pixels for training data')
-            train_classes = [np.stack((label, label>0, utils.distance_to_boundary(label)), axis=0).astype(np.float32)
-                                for label in tqdm(train_labels, file=tqdm_out)]
+            train_classes = [np.stack((label, label > 0, utils.distance_to_boundary(label)), axis=0).astype(np.float32)
+                             for label in tqdm(train_labels, file=tqdm_out)]
         else:
-            train_classes = [np.stack((label, label>0), axis=0).astype(np.float32)
-                                for label in tqdm(train_labels, file=tqdm_out)]
+            train_classes = [np.stack((label, label > 0), axis=0).astype(np.float32)
+                             for label in tqdm(train_labels, file=tqdm_out)]
         if run_test:
-            test_labels = [fastremap.renumber(label, in_place=True)[0] for label in test_labels]
-            if self.nclasses==3:
+            test_labels = [fastremap.renumber(label, in_place=True)[
+                0] for label in test_labels]
+            if self.nclasses == 3:
                 core_logger.info('computing boundary pixels for test data')
-                test_classes = [np.stack((label, label>0, utils.distance_to_boundary(label)), axis=0).astype(np.float32)
-                                    for label in tqdm(test_labels, file=tqdm_out)]
+                test_classes = [np.stack((label, label > 0, utils.distance_to_boundary(label)), axis=0).astype(np.float32)
+                                for label in tqdm(test_labels, file=tqdm_out)]
             else:
-                test_classes = [np.stack((label, label>0), axis=0).astype(np.float32)
-                                    for label in tqdm(test_labels, file=tqdm_out)]
+                test_classes = [np.stack((label, label > 0), axis=0).astype(np.float32)
+                                for label in tqdm(test_labels, file=tqdm_out)]
         else:
             test_classes = None
-        
+
         nmasks = np.array([label[0].max()-1 for label in train_classes])
         nremove = (nmasks < min_train_masks).sum()
         if nremove > 0:
-            core_logger.warning(f'{nremove} train images with number of masks less than min_train_masks ({min_train_masks}), removing from train set')
+            core_logger.warning(
+                f'{nremove} train images with number of masks less than min_train_masks ({min_train_masks}), removing from train set')
             ikeep = np.nonzero(nmasks >= min_train_masks)[0]
             train_data = [train_data[i] for i in ikeep]
             train_classes = [train_classes[i] for i in ikeep]
@@ -695,60 +729,65 @@ class UnetModel():
         val_labels = train_labels[::8]
         del train_data[::8], train_classes[::8], train_labels[::8]
         model_path = self._train_net(train_data, train_classes, test_data, test_classes,
-                                    save_path=save_path, save_every=save_every, save_each=save_each,
-                                    learning_rate=learning_rate, n_epochs=n_epochs, momentum=momentum, 
-                                    weight_decay=weight_decay, SGD=True, batch_size=batch_size, 
-                                    nimg_per_epoch=nimg_per_epoch, rescale=rescale, model_name=model_name)
+                                     save_path=save_path, save_every=save_every, save_each=save_each,
+                                     learning_rate=learning_rate, n_epochs=n_epochs, momentum=momentum,
+                                     weight_decay=weight_decay, SGD=True, batch_size=batch_size,
+                                     nimg_per_epoch=nimg_per_epoch, rescale=rescale, model_name=model_name)
 
         # find threshold using validation set
         core_logger.info('>>>> finding best thresholds using validation set')
-        cell_threshold, boundary_threshold = self.threshold_validation(val_data, val_labels)
-        np.save(model_path+'_cell_boundary_threshold.npy', np.array([cell_threshold, boundary_threshold]))
+        cell_threshold, boundary_threshold = self.threshold_validation(
+            val_data, val_labels)
+        np.save(model_path+'_cell_boundary_threshold.npy',
+                np.array([cell_threshold, boundary_threshold]))
         return model_path
 
     def threshold_validation(self, val_data, val_labels):
         cell_thresholds = np.arange(-4.0, 4.25, 0.5)
-        if self.nclasses==3:
+        if self.nclasses == 3:
             boundary_thresholds = np.arange(-2, 2.25, 1.0)
         else:
             boundary_thresholds = np.zeros(1)
         aps = np.zeros((cell_thresholds.size, boundary_thresholds.size, 3))
-        for j,cell_threshold in enumerate(cell_thresholds):
-            for k,boundary_threshold in enumerate(boundary_thresholds):
+        for j, cell_threshold in enumerate(cell_thresholds):
+            for k, boundary_threshold in enumerate(boundary_thresholds):
                 masks = []
                 for data in val_data:
-                    output,style = self._run_net(data.transpose(1,2,0), augment=False)
-                    masks.append(utils.get_masks_unet(output, cell_threshold, boundary_threshold))
+                    output, style = self._run_net(
+                        data.transpose(1, 2, 0), augment=False)
+                    masks.append(utils.get_masks_unet(
+                        output, cell_threshold, boundary_threshold))
                 ap = metrics.average_precision(val_labels, masks)[0]
                 ap0 = ap.mean(axis=0)
-                aps[j,k] = ap0
-            if self.nclasses==3:
+                aps[j, k] = ap0
+            if self.nclasses == 3:
                 kbest = aps[j].mean(axis=-1).argmax()
             else:
                 kbest = 0
-            if j%4==0:
-                core_logger.info('best threshold at cell_threshold = {} => boundary_threshold = {}, ap @ 0.5 = {}'.format(cell_threshold, boundary_thresholds[kbest], 
-                                                                        aps[j,kbest,0]))   
-        if self.nclasses==3: 
-            jbest, kbest = np.unravel_index(aps.mean(axis=-1).argmax(), aps.shape[:2])
+            if j % 4 == 0:
+                core_logger.info('best threshold at cell_threshold = {} => boundary_threshold = {}, ap @ 0.5 = {}'.format(cell_threshold, boundary_thresholds[kbest],
+                                                                                                                          aps[j, kbest, 0]))
+        if self.nclasses == 3:
+            jbest, kbest = np.unravel_index(
+                aps.mean(axis=-1).argmax(), aps.shape[:2])
         else:
             jbest = aps.squeeze().mean(axis=-1).argmax()
             kbest = 0
         cell_threshold, boundary_threshold = cell_thresholds[jbest], boundary_thresholds[kbest]
-        core_logger.info('>>>> best overall thresholds: (cell_threshold = {}, boundary_threshold = {}); ap @ 0.5 = {}'.format(cell_threshold, boundary_threshold, 
-                                                          aps[jbest,kbest,0]))
+        core_logger.info('>>>> best overall thresholds: (cell_threshold = {}, boundary_threshold = {}); ap @ 0.5 = {}'.format(cell_threshold, boundary_threshold,
+                                                                                                                              aps[jbest, kbest, 0]))
         return cell_threshold, boundary_threshold
 
     def _train_step(self, x, lbl):
         X = self._to_device(x)
         self.optimizer.zero_grad()
-        #if self.gpu:
+        # if self.gpu:
         #    self.net.train() #.cuda()
-        #else:
+        # else:
         self.net.train()
         y = self.net(X)[0]
         del X
-        loss = self.loss_fn(lbl,y)
+        loss = self.loss_fn(lbl, y)
         loss.backward()
         train_loss = loss.item()
         self.optimizer.step()
@@ -761,7 +800,7 @@ class UnetModel():
         with torch.no_grad():
             y, style = self.net(X)
             del X
-            loss = self.loss_fn(lbl,y)
+            loss = self.loss_fn(lbl, y)
             test_loss = loss.item()
             test_loss *= len(x)
         return test_loss
@@ -769,53 +808,64 @@ class UnetModel():
     def _set_optimizer(self, learning_rate, momentum, weight_decay, SGD=False):
         if SGD:
             self.optimizer = torch.optim.SGD(self.net.parameters(), lr=learning_rate,
-                                        momentum=momentum, weight_decay=weight_decay)
+                                             momentum=momentum, weight_decay=weight_decay)
         else:
-            import torch_optimizer as optim # for RADAM optimizer
-            self.optimizer = optim.RAdam(self.net.parameters(), lr=learning_rate, betas=(0.95, 0.999), #changed to .95
-                                        eps=1e-08, weight_decay=weight_decay)
+            import torch_optimizer as optim  # for RADAM optimizer
+            self.optimizer = optim.RAdam(self.net.parameters(), lr=learning_rate, betas=(0.95, 0.999),  # changed to .95
+                                         eps=1e-08, weight_decay=weight_decay)
             core_logger.info('>>> Using RAdam optimizer')
             self.optimizer.current_lr = learning_rate
-        
+
     def _set_learning_rate(self, lr):
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = lr
-    
+
     def _set_criterion(self):
         if self.unet:
             self.criterion = nn.CrossEntropyLoss(reduction='mean')
         else:
-            self.criterion  = nn.MSELoss(reduction='mean')
+            self.criterion = nn.MSELoss(reduction='mean')
             self.criterion2 = nn.BCEWithLogitsLoss(reduction='mean')
-            
-    def _train_net(self, train_data, train_labels, 
-              test_data=None, test_labels=None,
-              save_path=None, save_every=100, save_each=False,
-              learning_rate=0.2, n_epochs=500, momentum=0.9, weight_decay=0.00001, 
-              SGD=True, batch_size=8, nimg_per_epoch=None, rescale=True, model_name=None): 
+
+    def _train_net(self, train_data, train_labels,
+                   test_data=None, test_labels=None, tensorboard=False,
+                   save_path=None, save_every=100, save_each=False,
+                   learning_rate=0.2, n_epochs=500, momentum=0.9, weight_decay=0.00001,
+                   SGD=True, batch_size=8, nimg_per_epoch=None, rescale=True, model_name=None):
         """ train function uses loss function self.loss_fn in models.py"""
-        
+
         d = datetime.datetime.now()
-        
+
+        # tensorboard
+        if tensorboard:
+            from pathlib import Path
+            from torch.utils.tensorboard import SummaryWriter
+            logdir = Path(save_path)/'log'
+            logdir.mkdir(exist_ok=True)
+            writer = SummaryWriter(log_dir=str(logdir))
+
         self.n_epochs = n_epochs
         if isinstance(learning_rate, (list, np.ndarray)):
             if isinstance(learning_rate, np.ndarray) and learning_rate.ndim > 1:
                 raise ValueError('learning_rate.ndim must equal 1')
             elif len(learning_rate) != n_epochs:
-                raise ValueError('if learning_rate given as list or np.ndarray it must have length n_epochs')
+                raise ValueError(
+                    'if learning_rate given as list or np.ndarray it must have length n_epochs')
             self.learning_rate = learning_rate
             self.learning_rate_const = mode(learning_rate)[0][0]
         else:
             self.learning_rate_const = learning_rate
-            # set learning rate schedule    
+            # set learning rate schedule
             if SGD:
                 LR = np.linspace(0, self.learning_rate_const, 10)
                 if self.n_epochs > 250:
-                    LR = np.append(LR, self.learning_rate_const*np.ones(self.n_epochs-100))
+                    LR = np.append(LR, self.learning_rate_const *
+                                   np.ones(self.n_epochs-100))
                     for i in range(10):
                         LR = np.append(LR, LR[-1]/2 * np.ones(10))
                 else:
-                    LR = np.append(LR, self.learning_rate_const*np.ones(max(0,self.n_epochs-10)))
+                    LR = np.append(LR, self.learning_rate_const *
+                                   np.ones(max(0, self.n_epochs-10)))
             else:
                 LR = self.learning_rate_const * np.ones(self.n_epochs)
             self.learning_rate = LR
@@ -823,38 +873,44 @@ class UnetModel():
         self.batch_size = batch_size
         self._set_optimizer(self.learning_rate[0], momentum, weight_decay, SGD)
         self._set_criterion()
-        
+
         nimg = len(train_data)
 
         # compute average cell diameter
-        diam_train = np.array([utils.diameters(train_labels[k][0])[0] for k in range(len(train_labels))])
+        diam_train = np.array([utils.diameters(train_labels[k][0])[
+                              0] for k in range(len(train_labels))])
         diam_train_mean = diam_train[diam_train > 0].mean()
         self.diam_labels = diam_train_mean
         if rescale:
-            diam_train[diam_train<5] = 5.
+            diam_train[diam_train < 5] = 5.
             if test_data is not None:
-                diam_test = np.array([utils.diameters(test_labels[k][0])[0] for k in range(len(test_labels))])
-                diam_test[diam_test<5] = 5.
+                diam_test = np.array([utils.diameters(test_labels[k][0])[
+                                     0] for k in range(len(test_labels))])
+                diam_test[diam_test < 5] = 5.
             scale_range = 0.5
-            core_logger.info('>>>> median diameter set to = %d'%self.diam_mean)
+            core_logger.info('>>>> median diameter set to = %d' %
+                             self.diam_mean)
         else:
             scale_range = 1.0
-            
-        core_logger.info(f'>>>> mean of training label mask diameters (saved to model) {diam_train_mean:.3f}')
-        self.net.diam_labels.data = torch.ones(1, device=self.device) * diam_train_mean
+
+        core_logger.info(
+            f'>>>> mean of training label mask diameters (saved to model) {diam_train_mean:.3f}')
+        self.net.diam_labels.data = torch.ones(
+            1, device=self.device) * diam_train_mean
 
         nchan = train_data[0].shape[0]
-        core_logger.info('>>>> training network with %d channel input <<<<'%nchan)
-        core_logger.info('>>>> LR: %0.5f, batch_size: %d, weight_decay: %0.5f'%(self.learning_rate_const, self.batch_size, weight_decay))
-        
+        core_logger.info(
+            '>>>> training network with %d channel input <<<<' % nchan)
+        core_logger.info('>>>> LR: %0.5f, batch_size: %d, weight_decay: %0.5f' % (
+            self.learning_rate_const, self.batch_size, weight_decay))
+
         if test_data is not None:
             core_logger.info(f'>>>> ntrain = {nimg}, ntest = {len(test_data)}')
         else:
             core_logger.info(f'>>>> ntrain = {nimg}')
-        
+
         tic = time.time()
 
-        
         lavg, nsum = 0, 0
 
         if save_path is not None:
@@ -864,7 +920,8 @@ class UnetModel():
             if not os.path.exists(file_path):
                 os.makedirs(file_path)
         else:
-            core_logger.warning('WARNING: no save_path given, model not saving')
+            core_logger.warning(
+                'WARNING: no save_path given, model not saving')
 
         ksave = 0
         rsc = 1.0
@@ -876,78 +933,110 @@ class UnetModel():
         np.random.seed(0)
         inds_all = np.zeros((0,), 'int32')
         if nimg_per_epoch is None or nimg > nimg_per_epoch:
-            nimg_per_epoch = nimg 
+            nimg_per_epoch = nimg
         core_logger.info(f'>>>> nimg_per_epoch = {nimg_per_epoch}')
         while len(inds_all) < n_epochs * nimg_per_epoch:
             rperm = np.random.permutation(nimg)
             inds_all = np.hstack((inds_all, rperm))
-        
-        for iepoch in range(self.n_epochs):    
+
+        for iepoch in range(self.n_epochs):
             if SGD:
                 self._set_learning_rate(self.learning_rate[iepoch])
             np.random.seed(iepoch)
             rperm = inds_all[iepoch*nimg_per_epoch:(iepoch+1)*nimg_per_epoch]
-            for ibatch in range(0,nimg_per_epoch,batch_size):
+            for ibatch in range(0, nimg_per_epoch, batch_size):
                 inds = rperm[ibatch:ibatch+batch_size]
-                rsc = diam_train[inds] / self.diam_mean if rescale else np.ones(len(inds), np.float32)
+                rsc = diam_train[inds] / \
+                    self.diam_mean if rescale else np.ones(
+                        len(inds), np.float32)
                 # now passing in the full train array, need the labels for distance field
                 imgi, lbl, scale = transforms.random_rotate_and_resize(
-                                        [train_data[i] for i in inds], Y=[train_labels[i][1:] for i in inds],
-                                        rescale=rsc, scale_range=scale_range, unet=self.unet)
-                if self.unet and lbl.shape[1]>1 and rescale:
-                    lbl[:,1] *= scale[:,np.newaxis,np.newaxis]**2#diam_batch[:,np.newaxis,np.newaxis]**2
+                    [train_data[i] for i in inds], Y=[train_labels[i][1:] for i in inds],
+                    rescale=rsc, scale_range=scale_range, unet=self.unet)
+                if self.unet and lbl.shape[1] > 1 and rescale:
+                    # diam_batch[:,np.newaxis,np.newaxis]**2
+                    lbl[:, 1] *= scale[:, np.newaxis, np.newaxis]**2
                 train_loss = self._train_step(imgi, lbl)
                 lavg += train_loss
-                nsum += len(imgi) 
-            
-            if iepoch%10==0 or iepoch==5:
+                nsum += len(imgi)
+
+            if iepoch % 10 == 0 or iepoch == 5:
                 lavg = lavg / nsum
                 if test_data is not None:
                     lavgt, nsum = 0., 0
                     np.random.seed(42)
                     rperm = np.arange(0, len(test_data), 1, int)
-                    for ibatch in range(0,len(test_data),batch_size):
+                    for ibatch in range(0, len(test_data), batch_size):
                         inds = rperm[ibatch:ibatch+batch_size]
-                        rsc = diam_test[inds] / self.diam_mean if rescale else np.ones(len(inds), np.float32)
+                        rsc = diam_test[inds] / \
+                            self.diam_mean if rescale else np.ones(
+                                len(inds), np.float32)
                         imgi, lbl, scale = transforms.random_rotate_and_resize(
-                                            [test_data[i] for i in inds], Y=[test_labels[i][1:] for i in inds], 
-                                            scale_range=0., rescale=rsc, unet=self.unet) 
-                        if self.unet and lbl.shape[1]>1 and rescale:
-                            lbl[:,1] *= scale[:,np.newaxis,np.newaxis]**2
+                            [test_data[i] for i in inds], Y=[test_labels[i][1:] for i in inds],
+                            scale_range=0., rescale=rsc, unet=self.unet)
+                        if self.unet and lbl.shape[1] > 1 and rescale:
+                            lbl[:, 1] *= scale[:, np.newaxis, np.newaxis]**2
 
                         test_loss = self._test_eval(imgi, lbl)
                         lavgt += test_loss
                         nsum += len(imgi)
 
-                    core_logger.info('Epoch %d, Time %4.1fs, Loss %2.4f, Loss Test %2.4f, LR %2.4f'%
-                            (iepoch, time.time()-tic, lavg, lavgt/nsum, self.learning_rate[iepoch]))
+                    time_info = time.time()-tic
+                    core_logger.info('Epoch %d, Time %4.1fs, Loss %2.4f, Loss Test %2.4f, LR %2.4f' %
+                                     (iepoch, time_info, lavg, lavgt/nsum, self.learning_rate[iepoch]))
+
+                    # add to tensorboard
+                    if tensorboard:
+                        writer.add_scalar('time', time_info,
+                                          global_step=iepoch)
+                        writer.add_scalars('loss',
+                                           {
+                                               'train': lavg,
+                                               'test': lavgt/nsum
+                                           },
+                                           global_step=iepoch)
+                        # writer.add_scalar('train_loss', lavg,
+                        #                   global_step=iepoch)
+                        # writer.add_scalar(
+                        #     'test_loss', lavgt/nsum, global_step=iepoch)
+                        writer.add_scalar(
+                            'LR', self.learning_rate[iepoch], global_step=iepoch)
+
                 else:
-                    core_logger.info('Epoch %d, Time %4.1fs, Loss %2.4f, LR %2.4f'%
-                            (iepoch, time.time()-tic, lavg, self.learning_rate[iepoch]))
-                
+                    core_logger.info('Epoch %d, Time %4.1fs, Loss %2.4f, LR %2.4f' %
+                                     (iepoch, time.time()-tic, lavg, self.learning_rate[iepoch]))
+
                 lavg, nsum = 0, 0
-                            
+
             if save_path is not None:
-                if iepoch==self.n_epochs-1 or iepoch%save_every==1:
+                if iepoch == self.n_epochs-1 or iepoch % save_every == 1:
                     # save model at the end
-                    if save_each: #separate files as model progresses 
+                    if save_each:  # separate files as model progresses
                         if model_name is None:
-                            file_name = '{}_{}_{}_{}'.format(self.net_type, file_label, 
-                                                             d.strftime("%Y_%m_%d_%H_%M_%S.%f"),
-                                                             'epoch_'+str(iepoch)) 
+                            file_name = '{}_{}_{}_{}'.format(self.net_type, file_label,
+                                                             d.strftime(
+                                                                 "%Y_%m_%d_%H_%M_%S.%f"),
+                                                             'epoch_'+str(iepoch))
                         else:
-                            file_name = '{}_{}'.format(model_name, 'epoch_'+str(iepoch))
+                            file_name = '{}_{}'.format(
+                                model_name, 'epoch_'+str(iepoch))
                     else:
                         if model_name is None:
-                            file_name = '{}_{}_{}'.format(self.net_type, file_label, d.strftime("%Y_%m_%d_%H_%M_%S.%f"))
+                            file_name = '{}_{}_{}'.format(
+                                self.net_type, file_label, d.strftime("%Y_%m_%d_%H_%M_%S.%f"))
                         else:
                             file_name = model_name
                     file_name = os.path.join(file_path, file_name)
                     ksave += 1
-                    core_logger.info(f'saving network parameters to {file_name}')
+                    core_logger.info(
+                        f'saving network parameters to {file_name}')
                     self.net.save_model(file_name)
             else:
                 file_name = save_path
+
+        # close writer
+        if tensorboard:
+            writer.close()
 
         # reset to mkldnn if available
         self.net.mkldnn = self.mkldnn

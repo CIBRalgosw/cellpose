@@ -13,19 +13,23 @@ def get_arg_parser():
     see https://github.com/ashb/sphinx-argparse/issues/9#issue-1097057823
     """
 
-    parser = argparse.ArgumentParser(description='Cellpose Command Line Parameters')
+    parser = argparse.ArgumentParser(
+        description='Cellpose Command Line Parameters')
 
     # misc settings
-    parser.add_argument('--version', action='store_true', help='show cellpose version info')
+    parser.add_argument('--version', action='store_true',
+                        help='show cellpose version info')
     parser.add_argument('--verbose', action='store_true',
                         help='show information about running and settings and save to log')
 
     # settings for CPU vs GPU
     hardware_args = parser.add_argument_group("Hardware Arguments")
-    hardware_args.add_argument('--use_gpu', action='store_true', help='use gpu if torch with cuda installed')
+    hardware_args.add_argument(
+        '--use_gpu', action='store_true', help='use gpu if torch with cuda installed')
     hardware_args.add_argument('--gpu_device', required=False, default='0', type=str,
                                help='which gpu device to use, use an integer for torch, or mps for M1')
-    hardware_args.add_argument('--check_mkl', action='store_true', help='check if mkl working')
+    hardware_args.add_argument(
+        '--check_mkl', action='store_true', help='check if mkl working')
 
     # settings for locating and formatting images
     input_img_args = parser.add_argument_group("Input Image Arguments")
@@ -48,7 +52,8 @@ def get_arg_parser():
     input_img_args.add_argument('--chan2',
                                 default=0, type=int,
                                 help='nuclear channel (if cyto, optional); 0: NONE, 1: RED, 2: GREEN, 3: BLUE. Default: %(default)s')
-    input_img_args.add_argument('--invert', action='store_true', help='invert grayscale channel')
+    input_img_args.add_argument(
+        '--invert', action='store_true', help='invert grayscale channel')
     input_img_args.add_argument('--all_channels', action='store_true',
                                 help='use all channels in image if using own model and images with special channels')
 
@@ -58,7 +63,8 @@ def get_arg_parser():
                             help='model to use for running or starting training')
     model_args.add_argument('--add_model', required=False, default=None, type=str,
                             help='model path to copy model to hidden .cellpose folder for using in GUI/CLI')
-    model_args.add_argument('--unet', action='store_true', help='run standard unet instead of cellpose flow output')
+    model_args.add_argument('--unet', action='store_true',
+                            help='run standard unet instead of cellpose flow output')
     model_args.add_argument('--nclasses', default=3, type=int,
                             help='if running unet, choose 2 or 3; cellpose always uses 3')
 
@@ -70,7 +76,8 @@ def get_arg_parser():
                                 help='run 4 networks instead of 1 and average results')
     algorithm_args.add_argument('--no_interp', action='store_true',
                                 help='do not interpolate when running dynamics (was default)')
-    algorithm_args.add_argument('--no_norm', action='store_true', help='do not normalize images (normalize=False)')
+    algorithm_args.add_argument(
+        '--no_norm', action='store_true', help='do not normalize images (normalize=False)')
     algorithm_args.add_argument('--do_3D', action='store_true',
                                 help='process images as 3D stacks of images (nplanes x nchan x Ly x Lx')
     algorithm_args.add_argument('--diameter', required=False, default=30., type=float,
@@ -100,7 +107,8 @@ def get_arg_parser():
                              help='save masks as png and outlines as text file for ImageJ')
     output_args.add_argument('--save_tif', action='store_true',
                              help='save masks as tif and outlines as text file for ImageJ')
-    output_args.add_argument('--no_npy', action='store_true', help='suppress saving of npy')
+    output_args.add_argument(
+        '--no_npy', action='store_true', help='suppress saving of npy')
     output_args.add_argument('--savedir',
                              default=None, type=str,
                              help='folder to which segmentation results will be saved (defaults to input image directory)')
@@ -121,8 +129,10 @@ def get_arg_parser():
 
     # training settings
     training_args = parser.add_argument_group("Training Arguments")
-    training_args.add_argument('--train', action='store_true', help='train network using images in dir')
-    training_args.add_argument('--train_size', action='store_true', help='train size network at end of training')
+    training_args.add_argument(
+        '--train', action='store_true', help='train network using images in dir')
+    training_args.add_argument(
+        '--train_size', action='store_true', help='train size network at end of training')
     training_args.add_argument('--test_dir',
                                default=[], type=str, help='folder containing test data (optional)')
     training_args.add_argument('--mask_filter',
@@ -157,5 +167,7 @@ def get_arg_parser():
     training_args.add_argument('--model_name_out', default=None, type=str,
                                help='Name of model to save as, defaults to name describing model architecture. '
                                     'Model is saved in the folder specified by --dir in models subfolder.')
+    training_args.add_argument('--tensorboard', default=False, type=bool,
+                               help='use tensorboard or not.')
 
     return parser
