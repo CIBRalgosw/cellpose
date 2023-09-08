@@ -722,7 +722,7 @@ class CellposeModel(UnetModel):
               learning_rate=0.2, n_epochs=500, momentum=0.9, SGD=True,
               weight_decay=0.00001, batch_size=8, nimg_per_epoch=None,
               rescale=True, min_train_masks=5,
-              model_name=None, tensorboard=False):
+              model_name=None, tensorboard=True):
         """ train network with images train_data 
 
             Parameters

@@ -167,7 +167,7 @@ def get_arg_parser():
     training_args.add_argument('--model_name_out', default=None, type=str,
                                help='Name of model to save as, defaults to name describing model architecture. '
                                     'Model is saved in the folder specified by --dir in models subfolder.')
-    training_args.add_argument('--tensorboard', default=False, type=bool,
+    training_args.add_argument('--tensorboard', default=True, type=bool,
                                help='use tensorboard or not.')
 
     return parser
