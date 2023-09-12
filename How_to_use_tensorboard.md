@@ -7,7 +7,7 @@ git clone https://github.com/CIBRalgosw/cellpose.git -b add_tensorboard
 2, installation
 ```bash
 cd your_cloned_cellpose_dir_where_setup.py_in_it
-python setup.py
+python setup.py install
 ```
 
 ### Usage
